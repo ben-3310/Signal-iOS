@@ -137,7 +137,12 @@ public class AttachmentDownloadManagerImpl: AttachmentDownloadManager {
                 downloadState: downloadState,
                 maxDownloadSizeBytes: maxDownloadSize
             )
-            return try await self.decrypter.decryptTransientAttachment(encryptedFileUrl: encryptedFileUrl, metadata: metadata)
+            switch metadata.source {
+            case .linkNSyncBackup:
+                return encryptedFileUrl
+            default:
+                return try await self.decrypter.decryptTransientAttachment(encryptedFileUrl: encryptedFileUrl, metadata: metadata)
+            }
         }
     }
 
@@ -1090,7 +1095,7 @@ public class AttachmentDownloadManagerImpl: AttachmentDownloadManager {
                 return info.backupLocationUrl()
             case .attachment(let metadata, _), .transientAttachment(let metadata):
                 switch metadata.source {
-                case .transitTier(let cdnKey, _, _):
+                case .transitTier(let cdnKey, _, _), .linkNSyncBackup(let cdnKey):
                     guard let encodedKey = cdnKey.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) else {
                         throw OWSAssertionError("Invalid cdnKey.")
                     }
@@ -1119,7 +1124,7 @@ public class AttachmentDownloadManagerImpl: AttachmentDownloadManager {
                 return metadata.cdnAuthHeaders
             case .attachment(let metadata, _), .transientAttachment(let metadata):
                 switch metadata.source {
-                case .transitTier:
+                case .transitTier, .linkNSyncBackup:
                     return [:]
                 case .mediaTierFullsize(let cdnCredential, _, _, _), .mediaTierThumbnail(let cdnCredential, _, _):
                     return cdnCredential.cdnAuthHeaders
@@ -1133,7 +1138,7 @@ public class AttachmentDownloadManagerImpl: AttachmentDownloadManager {
                 return metadata.isExpired
             case .attachment(let metadata, _), .transientAttachment(let metadata):
                 switch metadata.source {
-                case .transitTier:
+                case .transitTier, .linkNSyncBackup:
                     return false
                 case .mediaTierFullsize(let cdnCredential, _, _, _), .mediaTierThumbnail(let cdnCredential, _, _):
                     return cdnCredential.isExpired
@@ -1217,7 +1222,7 @@ public class AttachmentDownloadManagerImpl: AttachmentDownloadManager {
             case .attachment(let downloadMetadata, let id):
                 let source: QueuedAttachmentDownloadRecord.SourceType = {
                     switch downloadMetadata.source {
-                    case .transitTier:
+                    case .transitTier, .linkNSyncBackup:
                         return .transitTier
                     case .mediaTierFullsize:
                         return .mediaTierFullsize
@@ -1560,6 +1565,8 @@ public class AttachmentDownloadManagerImpl: AttachmentDownloadManager {
                                     renderingFlag: .default,
                                     sourceFilename: nil
                                 )
+                            case .linkNSyncBackup:
+                                throw OWSAssertionError("Should not be validating link'n'sync backups")
                             }
                             continuation.resume(with: .success(pendingAttachment))
                         } catch let error {
@@ -1664,9 +1671,9 @@ public class AttachmentDownloadManagerImpl: AttachmentDownloadManager {
                         tx: tx
                     )
                     // Make sure to clear out the pending attachment from the orphan table so it isn't deleted!
-                    try self.orphanedAttachmentCleaner.releasePendingAttachment(withId: pendingAttachment.orphanRecordId, tx: tx)
+                    self.orphanedAttachmentCleaner.releasePendingAttachment(withId: pendingAttachment.orphanRecordId, tx: tx)
 
-                    try self.orphanedBackupAttachmentManager.didCreateOrUpdateAttachment(
+                    self.orphanedBackupAttachmentManager.didCreateOrUpdateAttachment(
                         withMediaName: Attachment.mediaName(digestSHA256Ciphertext: pendingAttachment.digestSHA256Ciphertext),
                         tx: tx
                     )
@@ -1716,7 +1723,7 @@ public class AttachmentDownloadManagerImpl: AttachmentDownloadManager {
                             )
 
                             // Make sure to clear out the pending attachment from the orphan table so it isn't deleted!
-                            try self.orphanedAttachmentCleaner.releasePendingAttachment(withId: pendingAttachment.orphanRecordId, tx: tx)
+                            self.orphanedAttachmentCleaner.releasePendingAttachment(withId: pendingAttachment.orphanRecordId, tx: tx)
                         }
                     } else {
                         throw error
@@ -1849,14 +1856,14 @@ public class AttachmentDownloadManagerImpl: AttachmentDownloadManager {
                     )
 
                     if let mediaName = attachmentParams.mediaName {
-                        try self.orphanedBackupAttachmentManager.didCreateOrUpdateAttachment(
+                        self.orphanedBackupAttachmentManager.didCreateOrUpdateAttachment(
                             withMediaName: mediaName,
                             tx: tx
                         )
                     }
 
                     // Make sure to clear out the pending attachment from the orphan table so it isn't deleted!
-                    try self.orphanedAttachmentCleaner.releasePendingAttachment(withId: pendingAttachment.orphanRecordId, tx: tx)
+                    self.orphanedAttachmentCleaner.releasePendingAttachment(withId: pendingAttachment.orphanRecordId, tx: tx)
 
                     guard let attachment = self.attachmentStore.fetchFirst(
                         owner: referenceParams.owner.id,
@@ -1887,7 +1894,7 @@ public class AttachmentDownloadManagerImpl: AttachmentDownloadManager {
                             )
 
                             // Make sure to clear out the pending attachment from the orphan table so it isn't deleted!
-                            try self.orphanedAttachmentCleaner.releasePendingAttachment(withId: pendingAttachment.orphanRecordId, tx: tx)
+                            self.orphanedAttachmentCleaner.releasePendingAttachment(withId: pendingAttachment.orphanRecordId, tx: tx)
                         }
                     } else {
                         throw error
@@ -2022,14 +2029,14 @@ public class AttachmentDownloadManagerImpl: AttachmentDownloadManager {
                     )
 
                     if let mediaName = attachmentParams.mediaName {
-                        try self.orphanedBackupAttachmentManager.didCreateOrUpdateAttachment(
+                        self.orphanedBackupAttachmentManager.didCreateOrUpdateAttachment(
                             withMediaName: mediaName,
                             tx: tx
                         )
                     }
 
                     // Make sure to clear out the pending attachment from the orphan table so it isn't deleted!
-                    try self.orphanedAttachmentCleaner.releasePendingAttachment(withId: pendingThumbnailAttachment.orphanRecordId, tx: tx)
+                    self.orphanedAttachmentCleaner.releasePendingAttachment(withId: pendingThumbnailAttachment.orphanRecordId, tx: tx)
 
                     guard let attachment = self.attachmentStore.fetchFirst(
                         owner: referenceParams.owner.id,
@@ -2060,7 +2067,7 @@ public class AttachmentDownloadManagerImpl: AttachmentDownloadManager {
                             )
 
                             // Make sure to clear out the pending attachment from the orphan table so it isn't deleted!
-                            try self.orphanedAttachmentCleaner.releasePendingAttachment(
+                            self.orphanedAttachmentCleaner.releasePendingAttachment(
                                 withId: pendingThumbnailAttachment.orphanRecordId,
                                 tx: tx
                             )

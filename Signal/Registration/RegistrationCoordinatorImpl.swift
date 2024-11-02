@@ -466,12 +466,17 @@ public class RegistrationCoordinatorImpl: RegistrationCoordinator {
             }
             try await self.deps.messageBackupManager.importEncryptedBackup(
                 fileUrl: fileUrl,
-                localIdentifiers: identity.localIdentifiers
+                localIdentifiers: identity.localIdentifiers,
+                mode: .remote
             )
             self.inMemoryState.hasRestoredFromLocalMessageBackup = true
             Logger.info("Finished restore")
-        }.recover { error in
-            owsFailDebug("Failed restore")
+        }.recover(on: schedulers.main) { error in
+            let (guarantee, future) = Guarantee<Void>.pending()
+            self.deps.messageBackupErrorPresenter.forcePresentDuringRegistration {
+                future.resolve()
+            }
+            return guarantee
         }.then { [weak self] () -> Guarantee<RegistrationStep> in
             guard let self else {
                 return unretainedSelfError()

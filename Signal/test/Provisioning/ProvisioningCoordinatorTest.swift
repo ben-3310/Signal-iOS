@@ -63,7 +63,9 @@ public class ProvisioningCoordinatorTest: XCTestCase {
             chatConnectionManager: chatConnectionManagerMock,
             db: mockDb,
             identityManager: identityManagerMock,
+            linkAndSyncManager: MockLinkAndSyncManager(),
             messageFactory: messageFactoryMock,
+            mrbkStore: MediaRootBackupKeyStore(keyValueStoreFactory: InMemoryKeyValueStoreFactory()),
             preKeyManager: prekeyManagerMock,
             profileManager: profileManagerMock,
             pushRegistrationManager: pushRegistrationManagerMock,
@@ -90,6 +92,8 @@ public class ProvisioningCoordinatorTest: XCTestCase {
             pniIdentityKeyPair: try keyPairForTesting(),
             profileKey: .generateRandom(),
             masterKey: Randomness.generateRandomBytes(SVR.masterKeyLengthBytes),
+            mrbk: Randomness.generateRandomBytes(MediaRootBackupKeyStore.mediaRootBackupKeyLength),
+            ephemeralBackupKey: nil,
             areReadReceiptsEnabled: true,
             primaryUserAgent: nil,
             provisioningCode: "1234",
@@ -176,5 +180,26 @@ extension ProvisioningCoordinatorTest {
                 bodyData: responseBody
             ))
         }
+    }
+}
+
+private class MockLinkAndSyncManager: LinkAndSyncManager {
+    func generateEphemeralBackupKey() -> EphemeralBackupKey {
+        return .forTesting()
+    }
+
+    func waitForLinkingAndUploadBackup(
+        ephemeralBackupKey: EphemeralBackupKey,
+        tokenId: DeviceProvisioningTokenId
+    ) async throws(PrimaryLinkNSyncError) {
+        return
+    }
+
+    func waitForBackupAndRestore(
+        localIdentifiers: LocalIdentifiers,
+        auth: ChatServiceAuth,
+        ephemeralBackupKey: EphemeralBackupKey
+    ) async throws(SecondaryLinkNSyncError) {
+        return
     }
 }

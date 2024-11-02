@@ -40,7 +40,9 @@ public class ProvisioningController: NSObject {
             chatConnectionManager: DependenciesBridge.shared.chatConnectionManager,
             db: DependenciesBridge.shared.db,
             identityManager: DependenciesBridge.shared.identityManager,
+            linkAndSyncManager: DependenciesBridge.shared.linkAndSyncManager,
             messageFactory: ProvisioningCoordinatorImpl.Wrappers.MessageFactory(),
+            mrbkStore: DependenciesBridge.shared.mrbkStore,
             preKeyManager: DependenciesBridge.shared.preKeyManager,
             profileManager: ProvisioningCoordinatorImpl.Wrappers.ProfileManager(SSKEnvironment.shared.profileManagerImplRef),
             pushRegistrationManager: ProvisioningCoordinatorImpl.Wrappers.PushRegistrationManager(AppEnvironment.shared.pushRegistrationManagerRef),
@@ -414,9 +416,19 @@ public class ProvisioningController: NSObject {
             throw OWSAssertionError("Failed to url encode query params")
         }
 
+        var capabilities = [String]()
+        if FeatureFlags.linkAndSync {
+            capabilities.append(DeviceProvisioningURL.Capability.linknsync.rawValue)
+        }
+
         // We don't use URLComponents to generate this URL as it encodes '+' and '/'
         // in the base64 pub_key in a way the Android doesn't tolerate.
-        let urlString = "\(UrlOpener.Constants.sgnlPrefix)://\(DeviceProvisioningURL.Constants.linkDeviceHost)?uuid=\(deviceId)&pub_key=\(encodedPubKey)"
+        var urlString = UrlOpener.Constants.sgnlPrefix
+        urlString.append("://")
+        urlString.append(DeviceProvisioningURL.Constants.linkDeviceHost)
+        urlString.append("?\(DeviceProvisioningURL.ephemeralDeviceIdParamName)=\(deviceId)")
+        urlString.append("&\(DeviceProvisioningURL.publicKeyParamName)=\(encodedPubKey)")
+        urlString.append("&\(DeviceProvisioningURL.capabilitiesParamName)=\(capabilities.joined(separator: ","))")
         guard let url = URL(string: urlString) else {
             throw OWSAssertionError("invalid url: \(urlString)")
         }

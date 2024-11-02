@@ -60,7 +60,6 @@ public final class MessageSenderJobRecord: JobRecord, FactoryInitializableFromRe
         messageType: MessageType,
         removeMessageAfterSending: Bool,
         isHighPriority: Bool,
-        exclusiveProcessIdentifier: String? = nil,
         failureCount: UInt = 0,
         status: Status = .ready
     ) {
@@ -88,7 +87,6 @@ public final class MessageSenderJobRecord: JobRecord, FactoryInitializableFromRe
         }
 
         super.init(
-            exclusiveProcessIdentifier: exclusiveProcessIdentifier,
             failureCount: failureCount,
             status: status
         )
@@ -218,9 +216,5 @@ public final class MessageSenderJobRecord: JobRecord, FactoryInitializableFromRe
         )
         try container.encode(removeMessageAfterSending, forKey: .removeMessageAfterSending)
         try container.encode(isHighPriority, forKey: .isHighPriority)
-    }
-
-    override var canBeRunByCurrentProcess: Bool {
-        return super.canBeRunByCurrentProcess && !removeMessageAfterSending
     }
 }

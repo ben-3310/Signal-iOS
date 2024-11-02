@@ -7,6 +7,10 @@ private import ObjectiveC.runtime
 import SignalServiceKit
 public import SignalUI
 
+@objc protocol UIScrollViewExtendedDelegate: UIScrollViewDelegate {
+    @objc func scrollViewDidChangeContentSize(_ scrollView: UIScrollView)
+}
+
 class CLVTableDataSource: NSObject {
     private var viewState: CLVViewState!
 
@@ -547,6 +551,7 @@ extension CLVTableDataSource: UITableViewDataSource {
         case .inboxFilterFooter:
             let filterFooterCell = tableView.dequeueReusableCell(ChatListFilterFooterCell.self, for: indexPath)
             filterFooterCell.primaryAction = .disableChatListFilter(target: viewController)
+            filterFooterCell.title = OWSLocalizedString("CHAT_LIST_EMPTY_FILTER_CLEAR_BUTTON", comment: "Button displayed in chat list to clear the unread filter when no chats are unread")
             cell = filterFooterCell
             guard let inboxFilterSection = renderState.inboxFilterSection else {
                 owsFailDebug("Missing view model in inbox filter section")
@@ -853,6 +858,69 @@ extension CLVTableDataSource {
 public class CLVTableView: UITableView {
     fileprivate var lastReloadDate: Date?
 
+    private var contentSizeDidChange: ((UIScrollView) -> Void)?
+
+    // A `tableFooterView` that always expands to fill available contentSize
+    // when the table view contents otherwise wouldn't fill the space. This
+    // supports Filter by Unread by helping to make transitions between very
+    // large and very small chat lists more consistent. What this does in
+    // practice is to prevent a glitch where the search bar would momentarily
+    // disappears and then animates back in with the adjusted content insets.
+    //
+    // It also allows the user to swipe up to dismiss the search bar (if the
+    // content height is too small, the search bar otherwise becomes un-hideable).
+    let footerView = UIView()
+
+    public init() {
+        super.init(frame: .zero, style: .grouped)
+        tableFooterView = footerView
+    }
+
+    @available(*, unavailable, message: "use other constructor instead.")
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    public override var dataSource: (any UITableViewDataSource)? {
+        didSet {
+            updateExtendedScrollViewDelegate()
+        }
+    }
+
+    public override var delegate: (any UITableViewDelegate)? {
+        didSet {
+            updateExtendedScrollViewDelegate()
+        }
+    }
+
+    public override var contentSize: CGSize {
+        didSet {
+            if let contentSizeDidChange, contentSize != oldValue {
+                contentSizeDidChange(self)
+            }
+        }
+    }
+
+    // Tests that the scroll view delegate conforms to UIScrollViewExtendedDelegate
+    // and sets up a `contentSizeDidChange` callback that doesn't need to perform
+    // a dynamic cast on every call. This is similar to how UIScrollView checks
+    // whether its delegate responds to various selectors up front so that
+    // rapidly-called methods like `-scrollViewDidScroll:` don't pay the cost
+    // of a `-respondsToSelector:` check with every call.
+    private func updateExtendedScrollViewDelegate() {
+        if
+            let dataSource = dataSource as? CLVTableDataSource,
+            delegate === dataSource,
+            let scrollViewDelegate = dataSource.scrollViewDelegate as? UIScrollViewExtendedDelegate
+        {
+            contentSizeDidChange = { [weak scrollViewDelegate] scrollView in
+                scrollViewDelegate?.scrollViewDidChangeContentSize(scrollView)
+            }
+        } else {
+            contentSizeDidChange = nil
+        }
+    }
+
     public override func reloadData() {
         AssertIsOnMainThread()
 
@@ -861,12 +929,42 @@ public class CLVTableView: UITableView {
         (dataSource as? CLVTableDataSource)?.calcRefreshTimer()
     }
 
-    public init() {
-        super.init(frame: .zero, style: .grouped)
+    public override func layoutSubviews() {
+        super.layoutSubviews()
+        updateFooterHeight()
     }
 
-    @available(*, unavailable, message: "use other constructor instead.")
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
+    public override func adjustedContentInsetDidChange() {
+        super.adjustedContentInsetDidChange()
+        updateFooterHeight()
+    }
+
+    private func updateFooterHeight() {
+        let visibleRect = frame.inset(by: adjustedContentInset)
+        let headerHeight = tableHeaderView?.frame.height ?? 0
+
+        // Compute whether the total height content height (excluding the footer)
+        // fits in the available space.
+        var availableHeight = visibleRect.height - headerHeight
+        for section in 0 ..< numberOfSections where availableHeight > 0 {
+            let newValue = availableHeight - rect(forSection: section).height
+            availableHeight = max(0, newValue)
+        }
+
+        // Add one pixel to the final height of the footer to ensure the content
+        // height is always slightly larger than the available space and thus
+        // remains scrollable.
+        //
+        // What this code *doesn't* do is cause scroll indicators to appear when
+        // they shouldn't, because this value is smaller than the amount the
+        // adjusted content insets can change by (i.e., the height of the expanded
+        // search bar).
+        let displayScale = (window?.windowScene?.screen ?? .main).scale
+        let finalHeight = availableHeight + 1 / displayScale
+
+        if footerView.frame.height != finalHeight {
+            footerView.frame.height = finalHeight
+            performBatchUpdates(nil)
+        }
     }
 }

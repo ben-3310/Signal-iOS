@@ -127,7 +127,7 @@ public class AttachmentManagerImpl: AttachmentManager {
                     return
                 }
             }
-        case .pendingAttachment, .pointer:
+        case .pendingAttachment, .quotedAttachmentProto:
             break
         }
         try _createQuotedReplyMessageThumbnail(
@@ -280,7 +280,7 @@ public class AttachmentManagerImpl: AttachmentManager {
         )
 
         if let mediaName = attachmentParams.mediaName {
-            try orphanedBackupAttachmentManager.didCreateOrUpdateAttachment(
+            orphanedBackupAttachmentManager.didCreateOrUpdateAttachment(
                 withMediaName: mediaName,
                 tx: tx
             )
@@ -494,7 +494,7 @@ public class AttachmentManagerImpl: AttachmentManager {
             )
 
             if let mediaName = attachmentParams.mediaName {
-                try orphanedBackupAttachmentManager.didCreateOrUpdateAttachment(
+                orphanedBackupAttachmentManager.didCreateOrUpdateAttachment(
                     withMediaName: mediaName,
                     tx: tx
                 )
@@ -684,10 +684,10 @@ public class AttachmentManagerImpl: AttachmentManager {
                 )
                 if hasOrphanRecord {
                     // Make sure to clear out the pending attachment from the orphan table so it isn't deleted!
-                    try orphanedAttachmentCleaner.releasePendingAttachment(withId: pendingAttachment.orphanRecordId, tx: tx)
+                    orphanedAttachmentCleaner.releasePendingAttachment(withId: pendingAttachment.orphanRecordId, tx: tx)
                 }
                 if let mediaName = attachmentParams.mediaName {
-                    try orphanedBackupAttachmentManager.didCreateOrUpdateAttachment(
+                    orphanedBackupAttachmentManager.didCreateOrUpdateAttachment(
                         withMediaName: mediaName,
                         tx: tx
                     )
@@ -715,7 +715,7 @@ public class AttachmentManagerImpl: AttachmentManager {
 
                         if hasOrphanRecord {
                             // Make sure to clear out the pending attachment from the orphan table so it isn't deleted!
-                            try self.orphanedAttachmentCleaner.releasePendingAttachment(
+                            self.orphanedAttachmentCleaner.releasePendingAttachment(
                                 withId: pendingAttachment.orphanRecordId,
                                 tx: tx
                             )
@@ -726,6 +726,8 @@ public class AttachmentManagerImpl: AttachmentManager {
                 }
 
                 // Already have an attachment with the same plaintext hash or media name! Create a new reference to it instead.
+                // If this fails and throws, the database won't be in an invalid state even if not rolled
+                // back; the existing attachment just doesn't get its new owner.
                 try attachmentStore.addOwner(
                     referenceParams,
                     for: existingAttachmentId,
@@ -763,16 +765,20 @@ public class AttachmentManagerImpl: AttachmentManager {
             info: {
                 guard MimeTypeUtil.isSupportedVisualMediaMimeType(originalAttachment.mimeType) else {
                     // Can't make a thumbnail, just return a stub.
-                    return .init(
-                        info: OWSAttachmentInfo(
-                            stubWithMimeType: originalAttachment.mimeType,
-                            sourceFilename: originalReference.sourceFilename
+                    return QuotedAttachmentInfo(
+                        info: .stub(
+                            withOriginalAttachmentMimeType: originalAttachment.mimeType,
+                            originalAttachmentSourceFilename: originalReference.sourceFilename
                         ),
                         renderingFlag: originalReference.renderingFlag
                     )
                 }
-                return .init(
-                    info: OWSAttachmentInfo(forV2ThumbnailReference: ()),
+
+                return QuotedAttachmentInfo(
+                    info: .forV2ThumbnailReference(
+                        withOriginalAttachmentMimeType: originalAttachment.mimeType,
+                        originalAttachmentSourceFilename: originalReference.sourceFilename
+                    ),
                     renderingFlag: originalReference.renderingFlag
                 )
             }()
@@ -786,16 +792,16 @@ public class AttachmentManagerImpl: AttachmentManager {
         let referenceOwner = AttachmentReference.OwnerBuilder.quotedReplyAttachment(dataSource.owner)
 
         switch dataSource.source.source {
-        case .pointer(let proto):
+        case .quotedAttachmentProto(let quotedAttachmentProtoSource):
             try self._createAttachmentPointer(
-                from: proto,
+                from: quotedAttachmentProtoSource.thumbnail,
                 owner: referenceOwner,
                 sourceOrder: nil,
                 tx: tx
             )
-        case .pendingAttachment(let pendingAttachment):
+        case .pendingAttachment(let pendingAttachmentSource):
             try self._createAttachmentStream(
-                consuming: .pendingAttachment(pendingAttachment),
+                consuming: .pendingAttachment(pendingAttachmentSource.pendingAttachment),
                 owner: referenceOwner,
                 sourceOrder: nil,
                 tx: tx
@@ -860,7 +866,7 @@ public class AttachmentManagerImpl: AttachmentManager {
             )
 
             if let mediaName = attachmentParams.mediaName {
-                try orphanedBackupAttachmentManager.didCreateOrUpdateAttachment(
+                orphanedBackupAttachmentManager.didCreateOrUpdateAttachment(
                     withMediaName: mediaName,
                     tx: tx
                 )

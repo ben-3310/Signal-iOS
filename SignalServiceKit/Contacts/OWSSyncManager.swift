@@ -203,10 +203,12 @@ extension OWSSyncManager: SyncManagerProtocol, SyncManagerProtocolSwift {
 
         let storageServiceKey = DependenciesBridge.shared.svr.data(for: .storageService, transaction: tx.asV2Read)
         let masterKey = DependenciesBridge.shared.svr.masterKeyDataForKeysSyncMessage(tx: tx.asV2Read)
+        let mrbk = DependenciesBridge.shared.mrbkStore.getOrGenerateMediaRootBackupKey(tx: tx.asV2Write)
         let syncKeysMessage = OWSSyncKeysMessage(
             thread: thread,
             storageServiceKey: storageServiceKey?.rawData,
             masterKey: masterKey,
+            mediaRootBackupKey: mrbk,
             transaction: tx
         )
         let preparedMessage = PreparedOutgoingMessage.preprepared(
@@ -234,6 +236,11 @@ extension OWSSyncManager: SyncManagerProtocol, SyncManagerProtocolSwift {
                 transaction: transaction.asV2Write
             )
         }
+
+        try? DependenciesBridge.shared.mrbkStore.setMediaRootBackupKey(
+            fromKeysSyncMessage: syncMessage,
+            tx: transaction.asV2Write
+        )
 
         transaction.addAsyncCompletionOffMain {
             NotificationCenter.default.postNotificationNameAsync(.syncManagerKeysSyncDidComplete, object: nil)
@@ -532,7 +539,9 @@ extension OWSSyncManager: SyncManagerProtocol, SyncManagerProtocolSwift {
         _sendFetchLatestSyncMessage(type: .localProfile, tx: tx)
     }
 
-    public func sendFetchLatestStorageManifestSyncMessage() { sendFetchLatestSyncMessage(type: .storageManifest) }
+    public func sendFetchLatestStorageManifestSyncMessage() async {
+        await SSKEnvironment.shared.databaseStorageRef.awaitableWrite { tx in self._sendFetchLatestSyncMessage(type: .storageManifest, tx: tx) }
+    }
 
     public func sendFetchLatestSubscriptionStatusSyncMessage() { sendFetchLatestSyncMessage(type: .subscriptionStatus) }
 

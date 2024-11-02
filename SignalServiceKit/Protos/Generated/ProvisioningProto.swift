@@ -452,6 +452,30 @@ public class ProvisioningProtoProvisionMessage: NSObject, Codable, NSSecureCodin
         return proto.hasMasterKey
     }
 
+    @objc
+    public var ephemeralBackupKey: Data? {
+        guard hasEphemeralBackupKey else {
+            return nil
+        }
+        return proto.ephemeralBackupKey
+    }
+    @objc
+    public var hasEphemeralBackupKey: Bool {
+        return proto.hasEphemeralBackupKey
+    }
+
+    @objc
+    public var mediaRootBackupKey: Data? {
+        guard hasMediaRootBackupKey else {
+            return nil
+        }
+        return proto.mediaRootBackupKey
+    }
+    @objc
+    public var hasMediaRootBackupKey: Bool {
+        return proto.hasMediaRootBackupKey
+    }
+
     public var hasUnknownFields: Bool {
         return !proto.unknownFields.data.isEmpty
     }
@@ -593,6 +617,12 @@ extension ProvisioningProtoProvisionMessage {
         }
         if let _value = masterKey {
             builder.setMasterKey(_value)
+        }
+        if let _value = ephemeralBackupKey {
+            builder.setEphemeralBackupKey(_value)
+        }
+        if let _value = mediaRootBackupKey {
+            builder.setMediaRootBackupKey(_value)
         }
         if let _value = unknownFields {
             builder.setUnknownFields(_value)
@@ -750,6 +780,28 @@ public class ProvisioningProtoProvisionMessageBuilder: NSObject {
 
     public func setMasterKey(_ valueParam: Data) {
         proto.masterKey = valueParam
+    }
+
+    @objc
+    @available(swift, obsoleted: 1.0)
+    public func setEphemeralBackupKey(_ valueParam: Data?) {
+        guard let valueParam = valueParam else { return }
+        proto.ephemeralBackupKey = valueParam
+    }
+
+    public func setEphemeralBackupKey(_ valueParam: Data) {
+        proto.ephemeralBackupKey = valueParam
+    }
+
+    @objc
+    @available(swift, obsoleted: 1.0)
+    public func setMediaRootBackupKey(_ valueParam: Data?) {
+        guard let valueParam = valueParam else { return }
+        proto.mediaRootBackupKey = valueParam
+    }
+
+    public func setMediaRootBackupKey(_ valueParam: Data) {
+        proto.mediaRootBackupKey = valueParam
     }
 
     public func setUnknownFields(_ unknownFields: SwiftProtobuf.UnknownStorage) {

@@ -95,6 +95,7 @@ public class DependenciesBridge {
     public let keyValueStoreFactory: KeyValueStoreFactory
     public let learnMyOwnPniManager: LearnMyOwnPniManager
     public let linkedDevicePniKeyManager: LinkedDevicePniKeyManager
+    public let linkAndSyncManager: LinkAndSyncManager
     public let linkPreviewManager: LinkPreviewManager
     public let linkPreviewSettingStore: LinkPreviewSettingStore
     public let linkPreviewSettingManager: any LinkPreviewSettingManager
@@ -103,8 +104,10 @@ public class DependenciesBridge {
     public let masterKeySyncManager: MasterKeySyncManager
     public let mediaBandwidthPreferenceStore: MediaBandwidthPreferenceStore
     public let mediaGalleryResourceManager: MediaGalleryResourceManager
+    public let messageBackupErrorPresenter: MessageBackupErrorPresenter
     public let messageBackupManager: MessageBackupManager
     public let messageStickerManager: MessageStickerManager
+    public let mrbkStore: MediaRootBackupKeyStore
     public let nicknameManager: any NicknameManager
     public let orphanedBackupAttachmentManager: OrphanedBackupAttachmentManager
     public let orphanedAttachmentCleaner: OrphanedAttachmentCleaner
@@ -213,6 +216,7 @@ public class DependenciesBridge {
         keyValueStoreFactory: KeyValueStoreFactory,
         learnMyOwnPniManager: LearnMyOwnPniManager,
         linkedDevicePniKeyManager: LinkedDevicePniKeyManager,
+        linkAndSyncManager: LinkAndSyncManager,
         linkPreviewManager: LinkPreviewManager,
         linkPreviewSettingStore: LinkPreviewSettingStore,
         linkPreviewSettingManager: any LinkPreviewSettingManager,
@@ -221,8 +225,10 @@ public class DependenciesBridge {
         masterKeySyncManager: MasterKeySyncManager,
         mediaBandwidthPreferenceStore: MediaBandwidthPreferenceStore,
         mediaGalleryResourceManager: MediaGalleryResourceManager,
+        messageBackupErrorPresenter: MessageBackupErrorPresenter,
         messageBackupManager: MessageBackupManager,
         messageStickerManager: MessageStickerManager,
+        mrbkStore: MediaRootBackupKeyStore,
         nicknameManager: any NicknameManager,
         orphanedBackupAttachmentManager: OrphanedBackupAttachmentManager,
         orphanedAttachmentCleaner: OrphanedAttachmentCleaner,
@@ -328,6 +334,7 @@ public class DependenciesBridge {
         self.keyValueStoreFactory = keyValueStoreFactory
         self.learnMyOwnPniManager = learnMyOwnPniManager
         self.linkedDevicePniKeyManager = linkedDevicePniKeyManager
+        self.linkAndSyncManager = linkAndSyncManager
         self.linkPreviewManager = linkPreviewManager
         self.linkPreviewSettingStore = linkPreviewSettingStore
         self.linkPreviewSettingManager = linkPreviewSettingManager
@@ -336,8 +343,10 @@ public class DependenciesBridge {
         self.masterKeySyncManager = masterKeySyncManager
         self.mediaBandwidthPreferenceStore = mediaBandwidthPreferenceStore
         self.mediaGalleryResourceManager = mediaGalleryResourceManager
+        self.messageBackupErrorPresenter = messageBackupErrorPresenter
         self.messageBackupManager = messageBackupManager
         self.messageStickerManager = messageStickerManager
+        self.mrbkStore = mrbkStore
         self.nicknameManager = nicknameManager
         self.orphanedBackupAttachmentManager = orphanedBackupAttachmentManager
         self.orphanedAttachmentCleaner = orphanedAttachmentCleaner

@@ -46,6 +46,7 @@ public class BackupAttachmentDownloadManagerImpl: BackupAttachmentDownloadManage
     private let listMediaManager: ListMediaManager
     private let mediaBandwidthPreferenceStore: MediaBandwidthPreferenceStore
     private let reachabilityManager: SSKReachabilityManager
+    private let remoteConfigProvider: RemoteConfigProvider
     private let taskQueue: TaskQueueLoader<TaskRunner>
     private let tsAccountManager: TSAccountManager
 
@@ -63,6 +64,8 @@ public class BackupAttachmentDownloadManagerImpl: BackupAttachmentDownloadManage
         messageBackupRequestManager: MessageBackupRequestManager,
         orphanedBackupAttachmentStore: OrphanedBackupAttachmentStore,
         reachabilityManager: SSKReachabilityManager,
+        remoteConfigProvider: RemoteConfigProvider,
+        svr: SecureValueRecovery,
         tsAccountManager: TSAccountManager
     ) {
         self.appReadiness = appReadiness
@@ -71,6 +74,7 @@ public class BackupAttachmentDownloadManagerImpl: BackupAttachmentDownloadManage
         self.db = db
         self.mediaBandwidthPreferenceStore = mediaBandwidthPreferenceStore
         self.reachabilityManager = reachabilityManager
+        self.remoteConfigProvider = remoteConfigProvider
         self.tsAccountManager = tsAccountManager
 
         self.listMediaManager = ListMediaManager(
@@ -81,6 +85,7 @@ public class BackupAttachmentDownloadManagerImpl: BackupAttachmentDownloadManage
             messageBackupRequestManager: messageBackupRequestManager,
             messageBackupKeyMaterial: messageBackupKeyMaterial,
             orphanedBackupAttachmentStore: orphanedBackupAttachmentStore,
+            svr: svr,
             tsAccountManager: tsAccountManager
         )
 
@@ -92,6 +97,7 @@ public class BackupAttachmentDownloadManagerImpl: BackupAttachmentDownloadManage
             db: db,
             mediaBandwidthPreferenceStore: mediaBandwidthPreferenceStore,
             messageBackupRequestManager: messageBackupRequestManager,
+            remoteConfigProvider: remoteConfigProvider,
             tsAccountManager: tsAccountManager
         )
         self.taskQueue = TaskQueueLoader(
@@ -142,6 +148,7 @@ public class BackupAttachmentDownloadManagerImpl: BackupAttachmentDownloadManage
             attachmentTimestamp: timestamp,
             dateProvider: dateProvider,
             backupAttachmentDownloadStore: backupAttachmentDownloadStore,
+            remoteConfigProvider: remoteConfigProvider,
             tx: tx
         )
 
@@ -228,6 +235,7 @@ public class BackupAttachmentDownloadManagerImpl: BackupAttachmentDownloadManage
         private let messageBackupRequestManager: MessageBackupRequestManager
         private let messageBackupKeyMaterial: MessageBackupKeyMaterial
         private let orphanedBackupAttachmentStore: OrphanedBackupAttachmentStore
+        private let svr: SecureValueRecovery
         private let tsAccountManager: TSAccountManager
 
         private let kvStore: KeyValueStore
@@ -240,6 +248,7 @@ public class BackupAttachmentDownloadManagerImpl: BackupAttachmentDownloadManage
             messageBackupRequestManager: MessageBackupRequestManager,
             messageBackupKeyMaterial: MessageBackupKeyMaterial,
             orphanedBackupAttachmentStore: OrphanedBackupAttachmentStore,
+            svr: SecureValueRecovery,
             tsAccountManager: TSAccountManager
         ) {
             self.attachmentStore = attachmentStore
@@ -249,6 +258,7 @@ public class BackupAttachmentDownloadManagerImpl: BackupAttachmentDownloadManage
             self.messageBackupRequestManager = messageBackupRequestManager
             self.messageBackupKeyMaterial = messageBackupKeyMaterial
             self.orphanedBackupAttachmentStore = orphanedBackupAttachmentStore
+            self.svr = svr
             self.tsAccountManager = tsAccountManager
         }
 
@@ -265,12 +275,18 @@ public class BackupAttachmentDownloadManagerImpl: BackupAttachmentDownloadManage
             guard FeatureFlags.messageBackupFileAlpha else {
                 return
             }
-            let (localAci, currentUploadEra, needsToQuery) = try db.read { tx in
+            let (
+                localAci,
+                currentUploadEra,
+                needsToQuery,
+                backupKey
+            ) = try db.read { tx in
                 let currentUploadEra = try MessageBackupMessageAttachmentArchiver.currentUploadEra()
                 return (
                     self.tsAccountManager.localIdentifiers(tx: tx)?.aci,
                     currentUploadEra,
-                    try self.needsToQueryListMedia(currentUploadEra: currentUploadEra, tx: tx)
+                    try self.needsToQueryListMedia(currentUploadEra: currentUploadEra, tx: tx),
+                    svr.data(for: .backupKey, transaction: tx)
                 )
             }
             guard needsToQuery else {
@@ -280,6 +296,9 @@ public class BackupAttachmentDownloadManagerImpl: BackupAttachmentDownloadManage
             guard let localAci else {
                 throw OWSAssertionError("Not registered")
             }
+            guard let backupKey else {
+                throw OWSAssertionError("Missing backup key")
+            }
 
             let messageBackupAuth = try await messageBackupRequestManager.fetchBackupServiceAuth(
                 localAci: localAci,
@@ -288,7 +307,7 @@ public class BackupAttachmentDownloadManagerImpl: BackupAttachmentDownloadManage
 
             // We go popping entries off this map as we process them.
             // By the end, anything left in here was not in the list response.
-            var mediaIdMap = try db.read { tx in try self.buildMediaIdMap(tx: tx) }
+            var mediaIdMap = try db.read { tx in try self.buildMediaIdMap(backupKey: backupKey, tx: tx) }
 
             var cursor: String?
             while true {
@@ -298,14 +317,16 @@ public class BackupAttachmentDownloadManagerImpl: BackupAttachmentDownloadManage
                     auth: messageBackupAuth
                 )
 
-                try await db.awaitableWrite { tx in
-                    for storedMediaObject in result.storedMediaObjects {
-                        try self.handleListedMedia(
-                            storedMediaObject,
-                            mediaIdMap: &mediaIdMap,
-                            uploadEra: currentUploadEra,
-                            tx: tx
-                        )
+                try await result.storedMediaObjects.forEachChunk(chunkSize: 100) { chunk in
+                    try await db.awaitableWrite { tx in
+                        for storedMediaObject in chunk {
+                            try self.handleListedMedia(
+                                storedMediaObject,
+                                mediaIdMap: &mediaIdMap,
+                                uploadEra: currentUploadEra,
+                                tx: tx
+                            )
+                        }
                     }
                 }
 
@@ -317,18 +338,23 @@ public class BackupAttachmentDownloadManagerImpl: BackupAttachmentDownloadManage
 
             // Any remaining attachments in the dictionary weren't listed by the server;
             // if we think its uploaded (has a non-nil cdn number) mark it as non-uploaded.
-            if mediaIdMap.isEmpty.negated {
-                try await db.awaitableWrite { tx in
-                    try mediaIdMap.values
-                        .lazy
-                        .filter { $0.cdnNumber != nil }
-                        .forEach { localAttachment in
+            let remainingLocalAttachments = mediaIdMap.values.filter { $0.cdnNumber != nil }
+            if remainingLocalAttachments.isEmpty.negated {
+                try await remainingLocalAttachments.forEachChunk(chunkSize: 100) { chunk in
+                    try await db.awaitableWrite { tx in
+                        try chunk.forEach { localAttachment in
                             try self.markMediaTierUploadExpired(localAttachment, tx: tx)
                         }
+                        if chunk.endIndex == remainingLocalAttachments.endIndex {
+                            self.didQueryListMedia(uploadEraAtStartOfRequest: currentUploadEra, tx: tx)
+                        }
+                    }
+                }
+            } else {
+                await db.awaitableWrite { tx in
+                    self.didQueryListMedia(uploadEraAtStartOfRequest: currentUploadEra, tx: tx)
                 }
             }
-
-            await self.didQueryListMedia(uploadEraAtStartOfRequest: currentUploadEra)
         }
 
         private func handleListedMedia(
@@ -527,17 +553,21 @@ public class BackupAttachmentDownloadManagerImpl: BackupAttachmentDownloadManage
         ///
         /// Today, this loads the map into memory. If the memory load of this dictionary ever becomes
         /// a problem, we can write it to an ephemeral sqlite table with a UNIQUE mediaId column.
-        private func buildMediaIdMap(tx: DBReadTransaction) throws -> [Data: LocalAttachment] {
+        private func buildMediaIdMap(
+            backupKey: SVR.DerivedKeyData,
+            tx: DBReadTransaction
+        ) throws -> [Data: LocalAttachment] {
             var map = [Data: LocalAttachment]()
-            try self.attachmentStore.enumerateAllAttachments(tx: tx) { attachment in
+            try self.attachmentStore.enumerateAllAttachmentsWithMediaName(tx: tx) { attachment in
                 guard let mediaName = attachment.mediaName else {
+                    owsFailDebug("Query returned attachment without media name!")
                     return
                 }
-                let fullsizeMediaId = try self.messageBackupKeyMaterial.mediaEncryptionMetadata(
+                let fullsizeMediaId = try self.messageBackupKeyMaterial.mediaId(
                     mediaName: mediaName,
                     type: .attachment,
-                    tx: tx
-                ).mediaId
+                    backupKey: backupKey
+                )
                 map[fullsizeMediaId] = LocalAttachment(
                     attachment: attachment,
                     isThumbnail: false,
@@ -548,11 +578,11 @@ public class BackupAttachmentDownloadManagerImpl: BackupAttachmentDownloadManage
                     || attachment.thumbnailMediaTierInfo != nil
                 {
                     // Also prep a thumbnail media name.
-                    let thumbnailMediaId = try self.messageBackupKeyMaterial.mediaEncryptionMetadata(
+                    let thumbnailMediaId = try self.messageBackupKeyMaterial.mediaId(
                         mediaName: mediaName,
                         type: .thumbnail,
-                        tx: tx
-                    ).mediaId
+                        backupKey: backupKey
+                    )
                     map[thumbnailMediaId] = LocalAttachment(
                         attachment: attachment,
                         isThumbnail: true,
@@ -574,10 +604,8 @@ public class BackupAttachmentDownloadManagerImpl: BackupAttachmentDownloadManage
             return currentUploadEra != lastQueriedUploadEra
         }
 
-        private func didQueryListMedia(uploadEraAtStartOfRequest uploadEra: String) async {
-            await db.awaitableWrite { tx in
-                self.kvStore.setString(uploadEra, key: Constants.lastListMediaUploadEraKey, transaction: tx)
-            }
+        private func didQueryListMedia(uploadEraAtStartOfRequest uploadEra: String, tx: DBWriteTransaction) {
+            self.kvStore.setString(uploadEra, key: Constants.lastListMediaUploadEraKey, transaction: tx)
         }
 
         private enum Constants {
@@ -598,6 +626,7 @@ public class BackupAttachmentDownloadManagerImpl: BackupAttachmentDownloadManage
         private let db: any DB
         private let mediaBandwidthPreferenceStore: MediaBandwidthPreferenceStore
         private let messageBackupRequestManager: MessageBackupRequestManager
+        private let remoteConfigProvider: RemoteConfigProvider
         private let tsAccountManager: TSAccountManager
 
         let store: TaskStore
@@ -612,6 +641,7 @@ public class BackupAttachmentDownloadManagerImpl: BackupAttachmentDownloadManage
             db: any DB,
             mediaBandwidthPreferenceStore: MediaBandwidthPreferenceStore,
             messageBackupRequestManager: MessageBackupRequestManager,
+            remoteConfigProvider: RemoteConfigProvider,
             tsAccountManager: TSAccountManager
         ) {
             self.attachmentStore = attachmentStore
@@ -621,6 +651,7 @@ public class BackupAttachmentDownloadManagerImpl: BackupAttachmentDownloadManage
             self.db = db
             self.mediaBandwidthPreferenceStore = mediaBandwidthPreferenceStore
             self.messageBackupRequestManager = messageBackupRequestManager
+            self.remoteConfigProvider = remoteConfigProvider
             self.tsAccountManager = tsAccountManager
 
             self.store = TaskStore(backupAttachmentDownloadStore: backupAttachmentDownloadStore)
@@ -636,6 +667,7 @@ public class BackupAttachmentDownloadManagerImpl: BackupAttachmentDownloadManage
                             attachmentTimestamp: record.record.timestamp,
                             dateProvider: dateProvider,
                             backupAttachmentDownloadStore: backupAttachmentDownloadStore,
+                            remoteConfigProvider: remoteConfigProvider,
                             tx: tx
                         )
                     }
@@ -772,6 +804,7 @@ public class BackupAttachmentDownloadManagerImpl: BackupAttachmentDownloadManage
             attachmentTimestamp: UInt64?,
             dateProvider: DateProvider,
             backupAttachmentDownloadStore: BackupAttachmentDownloadStore,
+            remoteConfigProvider: RemoteConfigProvider,
             tx: DBReadTransaction
         ) -> Eligibility {
             if attachment.asStream() != nil {
@@ -789,10 +822,9 @@ public class BackupAttachmentDownloadManagerImpl: BackupAttachmentDownloadManage
 
             let isRecent: Bool
             if let attachmentTimestamp {
-                // We're "recent" if our newest owning message is from the last month.
-                isRecent = Date(millisecondsSince1970: attachmentTimestamp)
-                    .addingTimeInterval(kMonthInterval)
-                    .isAfter(dateProvider())
+                // We're "recent" if our newest owning message wouldn't have expired off the queue.
+                isRecent = dateProvider().ows_millisecondsSince1970 - attachmentTimestamp
+                    <= remoteConfigProvider.currentConfig().messageQueueTimeMs
             } else {
                 // If we don't have a timestamp, its a wallpaper and we should always pass
                 // the recency check.

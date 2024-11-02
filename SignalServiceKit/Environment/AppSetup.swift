@@ -106,6 +106,7 @@ public class AppSetup {
         currentCallProvider: any CurrentCallProvider,
         notificationPresenter: any NotificationPresenter,
         incrementalTSAttachmentMigrator: IncrementalMessageTSAttachmentMigrator,
+        messageBackupErrorPresenterFactory: MessageBackupErrorPresenterFactory,
         testDependencies: TestDependencies = TestDependencies()
     ) -> AppSetup.DatabaseContinuation {
         configureUnsatisfiableConstraintLogging()
@@ -987,6 +988,8 @@ public class AppSetup {
                 messageBackupRequestManager: messageBackupRequestManager,
                 orphanedBackupAttachmentStore: orphanedBackupAttachmentStore,
                 reachabilityManager: reachabilityManager,
+                remoteConfigProvider: remoteConfigManager,
+                svr: svr,
                 tsAccountManager: tsAccountManager
             )
         let backupAttachmentUploadStore = BackupAttachmentUploadStoreImpl()
@@ -1023,6 +1026,14 @@ public class AppSetup {
         let backupThreadStore = MessageBackupThreadStore(threadStore: threadStore)
         let backupInteractionStore = MessageBackupInteractionStore(interactionStore: interactionStore)
         let backupStoryStore = MessageBackupStoryStore(storyStore: storyStore)
+        let mrbkStore = MediaRootBackupKeyStore(keyValueStoreFactory: keyValueStoreFactory)
+
+        let messageBackupErrorPresenter = messageBackupErrorPresenterFactory.build(
+            appReadiness: appReadiness,
+            db: db,
+            keyValueStoreFactory: keyValueStoreFactory,
+            tsAccountManager: tsAccountManager
+        )
 
         let messageBackupManager = MessageBackupManagerImpl(
             accountDataArchiver: MessageBackupAccountDataArchiverImpl(
@@ -1096,6 +1107,7 @@ public class AppSetup {
             encryptedStreamProvider: MessageBackupEncryptedProtoStreamProviderImpl(
                 backupKeyMaterial: messageBackupKeyMaterial
             ),
+            errorPresenter: messageBackupErrorPresenter,
             fullTextSearchIndexer: MessageBackupFullTextSearchIndexerImpl(
                 appReadiness: appReadiness,
                 dateProvider: dateProvider,
@@ -1117,6 +1129,7 @@ public class AppSetup {
             kvStoreFactory: keyValueStoreFactory,
             localRecipientArchiver: MessageBackupLocalRecipientArchiver(),
             messageBackupKeyMaterial: messageBackupKeyMaterial,
+            mrbkStore: mrbkStore,
             plaintextStreamProvider: MessageBackupPlaintextProtoStreamProviderImpl(),
             postFrameRestoreActionManager: MessageBackupPostFrameRestoreActionManager(
                 interactionStore: backupInteractionStore,
@@ -1190,6 +1203,15 @@ public class AppSetup {
             tsAccountManager: tsAccountManager
         )
 
+        let linkAndSyncManager = LinkAndSyncManagerImpl(
+            attachmentDownloadManager: attachmentDownloadManager,
+            attachmentUploadManager: attachmentUploadManager,
+            db: db,
+            messageBackupManager: messageBackupManager,
+            networkManager: networkManager,
+            tsAccountManager: tsAccountManager
+        )
+
         let dependenciesBridge = DependenciesBridge(
             accountAttributesUpdater: accountAttributesUpdater,
             adHocCallRecordManager: adHocCallRecordManager,
@@ -1249,6 +1271,7 @@ public class AppSetup {
             keyValueStoreFactory: keyValueStoreFactory,
             learnMyOwnPniManager: learnMyOwnPniManager,
             linkedDevicePniKeyManager: linkedDevicePniKeyManager,
+            linkAndSyncManager: linkAndSyncManager,
             linkPreviewManager: linkPreviewManager,
             linkPreviewSettingStore: linkPreviewSettingStore,
             linkPreviewSettingManager: linkPreviewSettingManager,
@@ -1257,8 +1280,10 @@ public class AppSetup {
             masterKeySyncManager: masterKeySyncManager,
             mediaBandwidthPreferenceStore: mediaBandwidthPreferenceStore,
             mediaGalleryResourceManager: mediaGalleryResourceManager,
+            messageBackupErrorPresenter: messageBackupErrorPresenter,
             messageBackupManager: messageBackupManager,
             messageStickerManager: messageStickerManager,
+            mrbkStore: mrbkStore,
             nicknameManager: nicknameManager,
             orphanedBackupAttachmentManager: orphanedBackupAttachmentManager,
             orphanedAttachmentCleaner: orphanedAttachmentCleaner,

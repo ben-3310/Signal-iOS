@@ -42,14 +42,17 @@ public enum FeatureFlags {
 
     public static let doNotSendGroupChangeMessagesOnProfileKeyRotation = false
 
+    public static let messageBackupErrorDisplay = build.includes(.internal)
     public static let messageBackupFileAlpha = build.includes(.dev)
     public static let messageBackupFileAlphaRegistrationFlow = build.includes(.dev)
+    public static let linkAndSync = build.includes(.dev)
+    public static let linkAndSyncTimeoutSeconds: UInt32 = 60 * (build.includes(.internal) ? 4 : 1)
 
     public static let callLinkCreate = true
     public static let callLinkSync = true
     public static let callLinkJoin = true
 
-    public static let chatListFilter = build.includes(.internal)
+    public static let chatListFilter = true
 
     public static let versionedExpireTimer = true
 

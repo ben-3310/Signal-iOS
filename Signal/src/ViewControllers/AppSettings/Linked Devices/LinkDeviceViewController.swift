@@ -29,12 +29,19 @@ class LinkDeviceViewController: OWSViewController {
         return label
     }()
 
-    private lazy var qrCodeScanViewController = QRCodeScanViewController(appearance: .framed())
+    var selectedAttachment: ImagePickerAttachment?
+
+    private var hasShownEducationSheet = false
+
+    private lazy var qrCodeScanViewController = QRCodeScanViewController(
+        appearance: .framed,
+        showUploadPhotoButton: FeatureFlags.biometricLinkedDeviceFlow
+    )
 
     override func viewDidLoad() {
         super.viewDidLoad()
 
-        title = NSLocalizedString("LINK_NEW_DEVICE_TITLE", comment: "Navigation title when scanning QR code to add new device.")
+        title = CommonStrings.scanQRCodeTitle
 
 #if TESTABLE_BUILD
         navigationItem.rightBarButtonItem = .init(
@@ -44,35 +51,40 @@ class LinkDeviceViewController: OWSViewController {
             action: #selector(manuallyEnterLinkURL)
         )
 #endif
-
-        view.backgroundColor = Theme.backgroundColor
-
         qrCodeScanViewController.delegate = self
 
-        view.addSubview(qrCodeScanViewController.view)
-        qrCodeScanViewController.view.autoPinWidthToSuperview()
-        qrCodeScanViewController.view.autoPin(toTopLayoutGuideOf: self, withInset: 0)
-        qrCodeScanViewController.view.autoPinToSquareAspectRatio()
         addChild(qrCodeScanViewController)
+        view.addSubview(qrCodeScanViewController.view)
 
-        let bottomView = UIView()
-        bottomView.preservesSuperviewLayoutMargins = true
-        view.addSubview(bottomView)
-        bottomView.autoPinEdge(.top, to: .bottom, of: qrCodeScanViewController.view)
-        bottomView.autoPinEdgesToSuperviewEdges(with: .zero, excludingEdge: .top)
+        if FeatureFlags.biometricLinkedDeviceFlow {
+            qrCodeScanViewController.view.autoPinEdgesToSuperviewEdges()
+            qrCodeScanViewController.didMove(toParent: self)
+        } else {
+            view.backgroundColor = Theme.backgroundColor
 
-        let heroImage = UIImage(imageLiteralResourceName: "ic_devices_ios")
-        let imageView = UIImageView(image: heroImage)
-        imageView.autoSetDimensions(to: heroImage.size)
+            qrCodeScanViewController.view.autoPinWidthToSuperview()
+            qrCodeScanViewController.view.autoPin(toTopLayoutGuideOf: self, withInset: 0)
+            qrCodeScanViewController.view.autoPinToSquareAspectRatio()
 
-        let bottomStack = UIStackView(arrangedSubviews: [ imageView, scanningInstructionsLabel ])
-        bottomStack.axis = .vertical
-        bottomStack.alignment = .center
-        bottomStack.spacing = 8
-        bottomView.addSubview(bottomStack)
-        bottomStack.autoPinWidthToSuperviewMargins()
-        bottomStack.autoPinHeightToSuperviewMargins(relation: .lessThanOrEqual)
-        bottomStack.autoVCenterInSuperview()
+            let bottomView = UIView()
+            bottomView.preservesSuperviewLayoutMargins = true
+            view.addSubview(bottomView)
+            bottomView.autoPinEdge(.top, to: .bottom, of: qrCodeScanViewController.view)
+            bottomView.autoPinEdgesToSuperviewEdges(with: .zero, excludingEdge: .top)
+
+            let heroImage = UIImage(imageLiteralResourceName: "ic_devices_ios")
+            let imageView = UIImageView(image: heroImage)
+            imageView.autoSetDimensions(to: heroImage.size)
+
+            let bottomStack = UIStackView(arrangedSubviews: [ imageView, scanningInstructionsLabel ])
+            bottomStack.axis = .vertical
+            bottomStack.alignment = .center
+            bottomStack.spacing = 8
+            bottomView.addSubview(bottomStack)
+            bottomStack.autoPinWidthToSuperviewMargins()
+            bottomStack.autoPinHeightToSuperviewMargins(relation: .lessThanOrEqual)
+            bottomStack.autoVCenterInSuperview()
+        }
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -80,6 +92,31 @@ class LinkDeviceViewController: OWSViewController {
 
         if !UIDevice.current.isIPad {
             UIDevice.current.ows_setOrientation(.portrait)
+        }
+
+        if !hasShownEducationSheet, FeatureFlags.biometricLinkedDeviceFlow {
+            let animationName = if traitCollection.userInterfaceStyle == .dark {
+                "linking-device-dark"
+            } else {
+                "linking-device-light"
+            }
+
+            let sheet = HeroSheetViewController(
+                heroAnimationName: animationName,
+                heroAnimationHeight: 192,
+                title: OWSLocalizedString(
+                    "LINK_DEVICE_SCANNING_INSTRUCTIONS_SHEET_TITLE",
+                    comment: "Title for QR Scanning screen instructions sheet"
+                ),
+                body: OWSLocalizedString(
+                    "LINK_DEVICE_SCANNING_INSTRUCTIONS_SHEET_BODY",
+                    comment: "Title for QR Scanning screen instructions sheet"
+                ),
+                buttonTitle: CommonStrings.okayButton
+            )
+
+            present(sheet, animated: true)
+            hasShownEducationSheet = true
         }
     }
 
@@ -90,8 +127,10 @@ class LinkDeviceViewController: OWSViewController {
     override func themeDidChange() {
         super.themeDidChange()
 
-        view.backgroundColor = Theme.backgroundColor
-        scanningInstructionsLabel.textColor = Theme.secondaryTextAndIconColor
+        if !FeatureFlags.biometricLinkedDeviceFlow {
+            view.backgroundColor = Theme.backgroundColor
+            scanningInstructionsLabel.textColor = Theme.secondaryTextAndIconColor
+        }
     }
 
     // MARK: -
@@ -140,13 +179,24 @@ class LinkDeviceViewController: OWSViewController {
         var pniIdentityKeyPair: ECKeyPair?
         var areReadReceiptsEnabled: Bool = true
         var masterKey: Data?
-        SSKEnvironment.shared.databaseStorageRef.read { tx in
+        let ephemeralBackupKey: EphemeralBackupKey?
+        if
+            FeatureFlags.linkAndSync,
+            deviceProvisioningUrl.capabilities.contains(where: { $0 == .linknsync })
+        {
+            ephemeralBackupKey = DependenciesBridge.shared.linkAndSyncManager.generateEphemeralBackupKey()
+        } else {
+            ephemeralBackupKey = nil
+        }
+        let mediaRootBackupKey = SSKEnvironment.shared.databaseStorageRef.write { tx in
             localIdentifiers = DependenciesBridge.shared.tsAccountManager.localIdentifiers(tx: tx.asV2Read)
             let identityManager = DependenciesBridge.shared.identityManager
             aciIdentityKeyPair = identityManager.identityKeyPair(for: .aci, tx: tx.asV2Read)
             pniIdentityKeyPair = identityManager.identityKeyPair(for: .pni, tx: tx.asV2Read)
             areReadReceiptsEnabled = OWSReceiptManager.areReadReceiptsEnabled(transaction: tx)
             masterKey = DependenciesBridge.shared.svr.masterKeyDataForKeysSyncMessage(tx: tx.asV2Read)
+            let mrbk = DependenciesBridge.shared.mrbkStore.getOrGenerateMediaRootBackupKey(tx: tx.asV2Write)
+            return mrbk
         }
         let myProfileKeyData = SSKEnvironment.shared.profileManagerRef.localProfileKey.keyData
 
@@ -178,6 +228,8 @@ class LinkDeviceViewController: OWSViewController {
             myPni: myPni,
             profileKey: myProfileKeyData,
             masterKey: masterKey,
+            mrbk: mediaRootBackupKey,
+            ephemeralBackupKey: ephemeralBackupKey,
             readReceiptsEnabled: areReadReceiptsEnabled,
             provisioningService: DeviceProvisioningServiceImpl(
                 networkManager: SSKEnvironment.shared.networkManagerRef,
@@ -186,9 +238,19 @@ class LinkDeviceViewController: OWSViewController {
             schedulers: DependenciesBridge.shared.schedulers
         )
 
-        deviceProvisioner.provision().map(on: DispatchQueue.main) {
+        deviceProvisioner.provision().then(on: SyncScheduler()) { tokenId in
             Logger.info("Successfully provisioned device.")
-
+            if FeatureFlags.linkAndSync, let ephemeralBackupKey {
+                return Promise.wrapAsync {
+                    try await DependenciesBridge.shared.linkAndSyncManager.waitForLinkingAndUploadBackup(
+                        ephemeralBackupKey: ephemeralBackupKey,
+                        tokenId: tokenId
+                    )
+                }
+            } else {
+                return .value(())
+            }
+        }.map(on: DispatchQueue.main) {
             self.delegate?.expectMoreDevices()
             self.popToLinkedDeviceList()
         }.catch(on: DispatchQueue.main) { error in
@@ -256,7 +318,6 @@ class LinkDeviceViewController: OWSViewController {
             handler: { _ in
                 guard let qrCodeString = alertController.textFields?.first?.text else { return }
                 self.qrCodeScanViewScanned(
-                    self.qrCodeScanViewController,
                     qrCodeData: nil,
                     qrCodeString: qrCodeString
                 )
@@ -271,11 +332,10 @@ class LinkDeviceViewController: OWSViewController {
     #endif
 }
 
-extension LinkDeviceViewController: QRCodeScanDelegate {
+extension LinkDeviceViewController: QRCodeScanOrPickDelegate {
 
     @discardableResult
     func qrCodeScanViewScanned(
-        _ qrCodeScanViewController: QRCodeScanViewController,
         qrCodeData: Data?,
         qrCodeString: String?
     ) -> QRCodeScanOutcome {
